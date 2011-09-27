@@ -10,10 +10,12 @@
 #		!nofix
 #
 #
-#	TEST
-#		echo '5013.2225,N,01903.7918,E,172.3,0.16,4,1.21,D' | nc localhost 9999
-#		echo '!nofix' | nc localhost 9999
-#	
+#	TEST TCP
+#		echo '5013.2225,N,01903.7918,E,172.3,0.16,4,1.21,D' | nc -t localhost 9999
+#		echo '!nofix' | nc -t localhost 9999
+#	TEST UDP
+#		echo '5013.2225,N,01903.7918,E,172.3,0.16,4,1.21,D' | nc -u localhost 9999
+#		echo '!nofix' | nc -u localhost 9999	
 #
 #	ERRORS:
 #		ERROR 0	- brak odebrabych danych
@@ -35,11 +37,12 @@ import time
 DEBUG = 1								# czy włączyć debugging?
 										# będą widoczne różne informacje na ekranie konsoli
 
-TCP_IP = 'chmurli.dyndns.info'
-#TCP_IP = 'localhost'
-TCP_PORT = 9999
-BUFFER_SIZE = 100
-LOG_FILE = '/tmp/tracker_gsm_gps.log'
+#_IP = 'chmurli.dyndns.info'
+#_IP = 'localhost'
+_PROTOCOL = 'TCP'						# TCP lub UDP
+_PORT = 9999
+_BUFFER_SIZE = 100
+_LOG_FILE = '/tmp/tracker_gsm_gps.log'
 
 # mySQL
 _DB_HOST='localhost'
@@ -54,7 +57,7 @@ _DB_TABLE='tracker_gps_gsm_data'
 
 def writeToLogFile(addr, string):
 	""" pisz do pliku z logami połączeń	"""
-	logfile = open(LOG_FILE, 'a')										# otwórz w trybie APPEND plik z logami	
+	logfile = open(_LOG_FILE, 'a')										# otwórz w trybie APPEND plik z logami	
 	text = "%s; %s\t: %s" % ( time.ctime(time.time()), addr, string )	# sformatuj dane do zapisu
 	logfile.write(text)													# zapisz do pliku
 	logfile.close()														# zamknij plik
@@ -96,15 +99,21 @@ except MySQLdb.Error, e:
 
 """otwórz socket do nasłuchiwania"""
 try:
-	s = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 		# utworzenie gniazda TCP
+	# na jakim protokole otworzyć port?
+	if _PROTOCOL == "UDP":
+		s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) 		# utworzenie gniazda UDP
+	else:
+		s = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 		# utworzenie gniazda TCP
 	#s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-	s.bind(('', TCP_PORT)) 										# dowiazanie do portu
-	s.listen(5)
+	s.bind(('', _PORT))												# dowiazanie do portu
+	if _PROTOCOL == "TCP":
+		s.listen(5)
 	print "Socket opened with success."
-	print "Listening port",TCP_PORT,"\b..."
+	print "Listening port",_PORT,"\b..."
 except socket.error:
 	if s:
-		s.close()
+		if _PROTOCOL == "TCP":
+			s.close()
 		print "Could not open socket."
 		print "Exit program."
 		cursor.close()
@@ -117,15 +126,23 @@ def serverStart():
 	"""startuj server"""
 	try:
 		while 1:
-			conn,addr = s.accept()						# odebranie polaczenia
+			
+			if _PROTOCOL == "UDP":
+				receivedData, addr = s.recvfrom(_BUFFER_SIZE)
+			else:
+				conn,addr = s.accept()						# odebranie polaczenia
+				receivedData = conn.recv(_BUFFER_SIZE)		# odebranie danych
+			
 			if DEBUG:
 				print "połączenie od: ", addr
-			receivedData = conn.recv(BUFFER_SIZE)		# odebranie danych
+			
 			if not receivedData: 						# jeżeli nic nie odebrano
 				if DEBUG:
 					print "nic nie odebrano"
 				writeToLogFile(addr, "ERROR 0: nic nie odebrano\n")
-				conn.close()
+				
+				if _PROTOCOL == "TCP":
+					conn.close()
 				continue
 			
 			
@@ -141,7 +158,8 @@ def serverStart():
 				if receivedData[1:6]=="nofix":
 					writeToLogFile(addr, "ERROR 2: pozycja GPS nie ustalona\n")
 				
-				conn.close()
+				if _PROTOCOL == "TCP":
+					conn.close()
 				continue
 			
 			
@@ -151,8 +169,9 @@ def serverStart():
 				writeToLogFile(addr, "ERROR 1: "+receivedData)
 				if DEBUG:
 					print "odebrano dane w błędnym formacie: %s" % ( receivedData )
-					
-				conn.close()
+				
+				if _PROTOCOL == "TCP":
+					conn.close()
 				continue
 			
 			writeToLogFile(addr, receivedData)			# zapisz dane do loga
@@ -185,7 +204,8 @@ def serverStart():
 			
 	
 			#conn.send(time.ctime(time.time()))		# wyslanie danych do klienta
-			conn.close()							# zamknięcie połączenia
+			if _PROTOCOL == "TCP":
+				conn.close()						# zamknięcie połączenia
 		
 			
 			
@@ -194,7 +214,8 @@ def serverStart():
 		print "\nExit server."
 		# zamknij socket i bazę
 		if s:
-			s.close()
+			if _PROTOCOL == "TCP":
+				s.close()
 		cursor.close()
 		db.close()
 
